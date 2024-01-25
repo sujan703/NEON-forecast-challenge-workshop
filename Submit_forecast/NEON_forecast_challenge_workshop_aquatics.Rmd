@@ -171,7 +171,7 @@ Note: This code chunk can take a few minutes to execute as it accesses the NOAA 
 # past stacked weather
 noaa_past_s3 <- neon4cast::noaa_stage3()
 
-variables <- c("air_temperature")
+variables <- c("air_temperature") # add some other variables
 #Other variable names can be found at https://projects.ecoforecast.org/neon4cast-docs/Shared-Forecast-Drivers.html#stage-3
 
 noaa_past <- noaa_past_s3  |> 
