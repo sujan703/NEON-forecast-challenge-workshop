@@ -5,17 +5,17 @@ date: "`r Sys.Date()`"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE) # package
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
 ```{r load-packages, echo = F, warning=F, message=F}
-## install.packages('remotes')
-## install.packages('fpp3') # package for applying simple forecasting methods
-## install.packages('tsibble') # package for dealing with time series data sets and tsibble objects
-## install.packages('tidyverse') # collection of R packages for data manipulation, analysis, and visualisation
-## install.packages('lubridate') # working with dates and times
-## remotes::install_github('eco4cast/neon4cast') # package from NEON4cast challenge organisers to assist with forecast building and submission
+#install.packages('remotes')
+#install.packages('fpp3') # package for applying simple forecasting methods
+#install.packages('tsibble') # package for dealing with time series data sets and tsibble objects
+#install.packages('tidyverse') # collection of R packages for data manipulation, analysis, and visualisation
+#install.packages('lubridate') # working with dates and times
+#remotes::install_github('eco4cast/neon4cast') # package from NEON4cast challenge organisers to assist with forecast building and submission
 
 # Load packages
 library(tidyverse)
@@ -26,6 +26,7 @@ library(lubridate)
 ```{r get-targets, message=F}
 #read in the targets data
 targets <- read_csv('https://data.ecoforecast.org/neon4cast-targets/aquatics/aquatics-targets.csv.gz')
+
 
 # read in the sites data
 aquatic_sites <- read_csv("https://raw.githubusercontent.com/eco4cast/neon4cast-targets/main/NEON_Field_Site_Metadata_20220412.csv") |>
@@ -45,7 +46,7 @@ targets <- targets %>%
 # Past stacked weather
 noaa_past_s3 <- neon4cast::noaa_stage3()
 
-variables <- c("air_temperature")
+variables <- c("air_temperature", "relative_humidity")
 #Other variable names can be found at https://projects.ecoforecast.org/neon4cast-docs/Shared-Forecast-Drivers.html#stage-3
 
 noaa_past <- noaa_past_s3  |> 
@@ -72,7 +73,7 @@ forecast_date <- Sys.Date()
 noaa_date <- forecast_date - days(1)
 
 noaa_future_s3 <- neon4cast::noaa_stage2(start_date = as.character(noaa_date))
-variables <- c("air_temperature")
+variables <- c("air_temperature", "relative_humidity")
 
 noaa_future <- noaa_future_s3 |> 
   dplyr::filter(datetime >= forecast_date,
@@ -88,7 +89,7 @@ noaa_future_daily <- noaa_future |>
   pivot_wider(names_from = variable, values_from = prediction) |>
   # convert to Celsius
   mutate(air_temperature = air_temperature - 273.15) |> 
-  select(datetime, site_id, air_temperature, parameter)
+  select(datetime, site_id, air_temperature,relative_humidity, parameter)
 ```
 
 ```{r model-setup}
@@ -116,11 +117,11 @@ for(i in 1:length(lake_sites$field_site_id)) {
     filter(site_id == example_site)
   
   #Fit linear model based on past data: water temperature = m * air temperature + b
-  fit <- lm(site_target$temperature ~ site_target$air_temperature)
+  fit <- lm(site_target$temperature ~ site_target$air_temperature + site_target$relative_humidity)
   # fit <- lm(site_target$temperature ~ ....)
     
   # use linear regression to forecast water temperature for each ensemble member
-  forecasted_temperature <- fit$coefficients[1] + fit$coefficients[2] * noaa_future_site$air_temperature
+  forecasted_temperature <- fit$coefficients[1] + fit$coefficients[2] * noaa_future_site$air_temperature + fit$coefficients[3] * noaa_future_site$relative_humidity
     
   # put all the relavent information into a tibble that we can bind together
   temperature <- tibble(datetime = noaa_future_site$datetime,
@@ -136,17 +137,18 @@ for(i in 1:length(lake_sites$field_site_id)) {
 ```
 
 ```{r make-standard}
+## from here make your edits.
 # Make forecast fit the EFI standards
 # Remember to change the model_id when you make changes to the model structure!
 my_model_id <- 'example_ID'
 
 temp_lm_forecast_EFI <- temp_lm_forecast %>%
   filter(datetime > forecast_date) %>%
-  mutate(model_id = my_model_id,
+  mutate(model_structure = my_model_id,
          reference_datetime = forecast_date,
          family = 'ensemble',
          parameter = as.character(parameter)) %>%
-  select(datetime, reference_datetime, site_id, family, parameter, variable, prediction, model_id)
+  select(datetime, reference_datetime, site_id, family, parameter, variable, prediction, model_structure)
 
 ```
 
@@ -154,7 +156,7 @@ temp_lm_forecast_EFI <- temp_lm_forecast %>%
 # Write the forecast to file
 theme <- 'aquatics'
 date <- temp_lm_forecast_EFI$reference_datetime[1]
-forecast_name_1 <- paste0(temp_lm_forecast_EFI$model_id[1], ".csv")
+forecast_name_1 <- paste0(temp_lm_forecast_EFI$model_structure[1], ".csv")
 forecast_file_1 <- paste(theme, date, forecast_name_1, sep = '-')
 forecast_file_1
 
@@ -175,8 +177,8 @@ neon4cast::forecast_output_validator(file.path('Forecasts',forecast_file_1))
 ## # can uses the neon4cast::forecast_output_validator() to check the forecast is in the right format
 
 # UNCOMMMENT THIS WHEN YOU ARE READY TO SUBMIT
-## neon4cast::submit(forecast_file = file.path('Forecasts', forecast_file_1),
-##                   ask = FALSE) # if ask = T (default), it will produce a pop-up box asking if you want to submit
+neon4cast::submit(forecast_file = file.path('Forecasts', forecast_file_1),
+                  ask = FALSE) # if ask = T (default), it will produce a pop-up box asking if you want to submit
 
 
 ```
