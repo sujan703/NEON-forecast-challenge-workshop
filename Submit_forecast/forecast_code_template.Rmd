@@ -66,6 +66,25 @@ noaa_past_mean <- noaa_past |>
 
 ```
 
+```{r}
+# aggregate the past to mean values
+noaa_daily_mean <- noaa_past_mean |> 
+  mutate(datetime = as_date(datetime)) |> 
+  group_by(datetime, site_id) |> 
+  summarize(air_temperature = mean(air_temperature, na.rm = TRUE),
+            relative_humidity = mean(relative_humidity, na.rm = TRUE), .groups = "drop")
+
+#Bind lake water temperature to noaa past air temperature and pressure
+#Also, pivot wider to join the water temp from targets to new dataframe to model
+merged_df <- targets %>%
+  pivot_wider(names_from = variable, values_from = observation)
+
+#Join this dataset with noaa past mean to have all variables in a single df
+model_df <- dplyr::left_join(merged_df, noaa_daily_mean, join_by("datetime", "site_id"), unmatched = "drop")
+
+```
+
+
 ```{r get-NOAA-future, message = F}
 # Future weather
 # New forecast only available at 5am UTC the next day
@@ -90,73 +109,150 @@ noaa_future_daily <- noaa_future |>
   # convert to Celsius
   mutate(air_temperature = air_temperature - 273.15) |> 
   select(datetime, site_id, air_temperature,relative_humidity, parameter)
+noaa_future_daily
 ```
+
+Select the observed and modeled air temperature forecast for your forecasting time period
+
+```{r}
+for(i in 1:length(lake_sites$field_site_id)) { 
+forecast_start_date <- Sys.Date()
+
+past_lake_temp <- noaa_daily_mean %>%
+  filter(datetime >= "2024-02-07" & datetime <= "2024-02-18") %>%
+  mutate(air_temperature = ifelse(datetime > forecast_start_date, NA, air_temperature),
+         relative_humidity = ifelse(datetime > forecast_start_date, NA, relative_humidity))
+
+#select the date range for noaa air temperature values as well
+future_lake_temp <- noaa_future_daily %>%
+  filter(datetime >= "2024-02-07" & datetime <= "2024-02-18")
+}
+```
+
+First, build a data frame to fit the model. We will create a column `wtemp_yday` which is a column of 1-day lags of water temperature.
+
+```{r}
+model_lag_data <- model_df %>%
+  group_by(site_id) %>%
+  mutate(wtemp_yday = lag(temperature))
+head(model_lag_data)
+```
+
+## Specify forecast model
 
 ```{r model-setup}
 # Generate a dataframe to fit the model to 
+# Generate a dataframe to fit the model from 
 targets_lm <- targets |> 
-  filter(variable == 'temperature') |>
   pivot_wider(names_from = 'variable', values_from = 'observation') |> 
   left_join(noaa_past_mean, 
             by = c("datetime","site_id"))
 
-# Loop through each site to fit the model
-temp_lm_forecast <- NULL
+# Loop through each site and datetime to fit the model
+forecast_df <- NULL
 
 ```
 
 ```{r forecast-loop}
+forecast_horizon <- 30
+forecast_dates <- seq(from = ymd(forecast_date), to = ymd(forecast_date) + forecast_horizon, by = "day")
+n_members <- 31
+
 for(i in 1:length(lake_sites$field_site_id)) {  
   
-  example_site <- lake_sites$field_site_id[i]
+  curr_site <- lake_sites$field_site_id[i]
   
   site_target <- targets_lm |>
-    filter(site_id == example_site)
+    filter(site_id == curr_site)
 
   noaa_future_site <- noaa_future_daily |> 
-    filter(site_id == example_site)
+    filter(site_id == curr_site)
   
   #Fit linear model based on past data: water temperature = m * air temperature + b
   fit <- lm(site_target$temperature ~ site_target$air_temperature + site_target$relative_humidity)
   # fit <- lm(site_target$temperature ~ ....)
-    
+  
+  
+ for (t in 1:length(forecast_dates)) {
+  
+  #pull driver ensemble for the relevant date; here we are using all 30 NOAA ensemble members
+  site_drivers <- noaa_future_site %>%
+    filter(datetime == forecast_dates[t])
   # use linear regression to forecast water temperature for each ensemble member
-  forecasted_temperature <- fit$coefficients[1] + fit$coefficients[2] * noaa_future_site$air_temperature + fit$coefficients[3] * noaa_future_site$relative_humidity
+  forecasted_temperature <- fit$coefficients[1] + fit$coefficients[2] * site_drivers$air_temperature + fit$coefficients[3] * site_drivers$relative_humidity
     
   # put all the relavent information into a tibble that we can bind together
-  temperature <- tibble(datetime = noaa_future_site$datetime,
-                        site_id = example_site,
-                        parameter = noaa_future_site$parameter,
-                        prediction = forecasted_temperature,
-                        variable = "temperature")
   
-  temp_lm_forecast <- dplyr::bind_rows(temp_lm_forecast, temperature)
-  message(example_site, ' temperature forecast run')
+  curr_site_df <- tibble(datetime = rep(forecast_dates[t], times = n_members),
+                         site_id = curr_site,
+                         parameter = 1:n_members,
+                         prediction = forecasted_temperature,
+                         variable = "temperature") #Change this if you are forecasting a different variable
   
+  forecast_df <- dplyr::bind_rows(forecast_df, curr_site_df)
+  
+  }
+  
+  message(curr_site, 'forecast run')
 }
 ```
+
+We now have 30 possible forecasts of water temperature at each site and each day. On this plot each line represents one of the possible forecasts and the range of forecasted water temperature is a simple quantification of the uncertainty in our forecast.
+
+Looking back at the forecasts we produced:
+
+```{r}
+forecast_df %>% 
+  filter(variable == 'temperature') %>%
+  ggplot(.,aes(x=datetime, y=prediction, group = parameter)) + 
+  geom_point(data = targets,aes(x=datetime, y=observation, group = 'obs'), colour = 'darkblue') +
+  ylim (-5,10)+
+  geom_line(alpha = 0.5, aes(colour = 'ensemble member (parameter)')) + 
+  facet_wrap(~site_id, scales = 'free_y') +
+  scale_x_date(expand = c(0,0), date_labels = "%d %b", date_breaks = "4 days") +
+  labs(y = 'value') +
+  geom_vline(aes(linetype = 'reference_datetime', xintercept = Sys.Date()), colour = 'blue', size = 0.5) +
+  labs(title = 'site_id', subtitle = 'variable = temperature', caption = 'prediction') + 
+  annotate("text", x = Sys.Date() - days(10), y = -4, label = "past")  +
+  annotate("text", x = Sys.Date() + days(12), y = -4, label = "future")  +
+  theme_bw() +
+  coord_cartesian(xlim = c(min(forecast_df$datetime) - 5,
+                           Sys.Date() + 7)) +
+  scale_linetype_manual(values = 'dashed', name = '') +
+  scale_colour_manual(values = 'black', name = '') +
+  theme(strip.text = element_text(colour = 'orange'),
+        axis.title.y = element_text(colour = 'green'),
+        axis.title.x = element_text(colour = 'red'),
+        axis.text.y = element_text(colour = 'purple'),
+        axis.text.x = element_text(colour = 'red'),
+        plot.caption = element_text(hjust = 0, colour = 'purple'),
+        plot.title = element_text(colour = 'orange'), 
+        plot.subtitle = element_text(colour = 'green'))
+```
+
+
 
 ```{r make-standard}
 ## from here make your edits.
 # Make forecast fit the EFI standards
 # Remember to change the model_id when you make changes to the model structure!
-my_model_id <- 'example_ID'
+my_model_id <- 'sujan_ID'
 
-temp_lm_forecast_EFI <- temp_lm_forecast %>%
+forecast_df_EFI <- forecast_df %>%
   filter(datetime > forecast_date) %>%
-  mutate(model_structure = my_model_id,
+  mutate(model_id = my_model_id,
          reference_datetime = forecast_date,
          family = 'ensemble',
          parameter = as.character(parameter)) %>%
-  select(datetime, reference_datetime, site_id, family, parameter, variable, prediction, model_structure)
+  select(datetime, reference_datetime, site_id, family, parameter, variable, prediction, model_id)
 
 ```
 
 ```{r write-forecast}
 # Write the forecast to file
 theme <- 'aquatics'
-date <- temp_lm_forecast_EFI$reference_datetime[1]
-forecast_name_1 <- paste0(temp_lm_forecast_EFI$model_structure[1], ".csv")
+date <- forecast_df_EFI$reference_datetime[1]
+forecast_name_1 <- paste0(forecast_df_EFI$model_id[1], ".csv")
 forecast_file_1 <- paste(theme, date, forecast_name_1, sep = '-')
 forecast_file_1
 
@@ -165,8 +261,12 @@ if (!dir.exists('Forecasts')) {
   dir.create('Forecasts')
 }
 
-write_csv(temp_lm_forecast_EFI, file.path('Forecasts',forecast_file_1))
+write_csv(forecast_df_EFI, file.path('Forecasts',forecast_file_1))
+```
 
+Check that forecast format is valid
+
+```{r}
 neon4cast::forecast_output_validator(file.path('Forecasts',forecast_file_1))
 
 ```
@@ -177,16 +277,15 @@ neon4cast::forecast_output_validator(file.path('Forecasts',forecast_file_1))
 ## # can uses the neon4cast::forecast_output_validator() to check the forecast is in the right format
 
 # UNCOMMMENT THIS WHEN YOU ARE READY TO SUBMIT
-neon4cast::submit(forecast_file = file.path('Forecasts', forecast_file_1),
-                  ask = FALSE) # if ask = T (default), it will produce a pop-up box asking if you want to submit
+neon4cast::submit(forecast_file = file.path('Forecasts', forecast_file_1), ask = FALSE) # if ask = T (default), it will produce a pop-up box asking if you want to submit
 
 
 ```
 
 ```{r plot-forecast}
-temp_lm_forecast_EFI |> 
+forecast_df_EFI |> 
   ggplot(aes(x=datetime, y=prediction, group = parameter)) +
   geom_line() +
   facet_wrap(~site_id) +
-  labs(title = paste0('Forecast generated for ', temp_lm_forecast_EFI$variable[1], ' on ', temp_lm_forecast_EFI$reference_datetime[1]))
+  labs(title = paste0('Forecast generated for ', forecast_df_EFI$variable[1], ' on ', forecast_df_EFI$reference_datetime[1]))
 ```
