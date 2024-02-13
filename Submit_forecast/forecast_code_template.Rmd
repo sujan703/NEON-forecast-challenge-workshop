@@ -157,13 +157,16 @@ forecast_df <- NULL
 forecast_horizon <- 30
 forecast_dates <- seq(from = ymd(forecast_date), to = ymd(forecast_date) + forecast_horizon, by = "day")
 n_members <- 31
+forecast_df <- NULL
 
 for(i in 1:length(lake_sites$field_site_id)) {  
   
   curr_site <- lake_sites$field_site_id[i]
   
   site_target <- targets_lm |>
-    filter(site_id == curr_site)
+    filter(site_id == curr_site) |>
+    na.omit()
+    
 
   noaa_future_site <- noaa_future_daily |> 
     filter(site_id == curr_site)
@@ -171,16 +174,24 @@ for(i in 1:length(lake_sites$field_site_id)) {
   #Fit linear model based on past data: water temperature = m * air temperature + b
   fit <- lm(site_target$temperature ~ site_target$air_temperature + site_target$relative_humidity)
   # fit <- lm(site_target$temperature ~ ....)
+  fit_summary = summary(fit)
+  coeffs = round(fit$coefficient, 2)
+  param_se = fit_summary$coefficient [,2]
+  mod = predict(fit, data= site_target)
+  residuals = mod - site_target$temperature
+  param_df = data.frame(beta1= rnorm(n_members, coeffs[1]),
+                        beta2= rnorm(n_members, coeffs[2]))
   
-  
+  sigma = sd(residuals, na.rm = TRUE)
  for (t in 1:length(forecast_dates)) {
   
   #pull driver ensemble for the relevant date; here we are using all 30 NOAA ensemble members
   site_drivers <- noaa_future_site %>%
     filter(datetime == forecast_dates[t])
   # use linear regression to forecast water temperature for each ensemble member
-  forecasted_temperature <- fit$coefficients[1] + fit$coefficients[2] * site_drivers$air_temperature + fit$coefficients[3] * site_drivers$relative_humidity
-    
+ 
+  forecasted_temperature = param_df$beta1 + site_drivers$air_temperature + param_df$beta2 + site_drivers$relative_humidity +
+    rnorm(n= n_members, mean = 0, sd=sigma)
   # put all the relavent information into a tibble that we can bind together
   
   curr_site_df <- tibble(datetime = rep(forecast_dates[t], times = n_members),
@@ -196,40 +207,6 @@ for(i in 1:length(lake_sites$field_site_id)) {
   message(curr_site, 'forecast run')
 }
 ```
-
-We now have 30 possible forecasts of water temperature at each site and each day. On this plot each line represents one of the possible forecasts and the range of forecasted water temperature is a simple quantification of the uncertainty in our forecast.
-
-Looking back at the forecasts we produced:
-
-```{r}
-forecast_df %>% 
-  filter(variable == 'temperature') %>%
-  ggplot(.,aes(x=datetime, y=prediction, group = parameter)) + 
-  geom_point(data = targets,aes(x=datetime, y=observation, group = 'obs'), colour = 'darkblue') +
-  ylim (-5,10)+
-  geom_line(alpha = 0.5, aes(colour = 'ensemble member (parameter)')) + 
-  facet_wrap(~site_id, scales = 'free_y') +
-  scale_x_date(expand = c(0,0), date_labels = "%d %b", date_breaks = "4 days") +
-  labs(y = 'value') +
-  geom_vline(aes(linetype = 'reference_datetime', xintercept = Sys.Date()), colour = 'blue', size = 0.5) +
-  labs(title = 'site_id', subtitle = 'variable = temperature', caption = 'prediction') + 
-  annotate("text", x = Sys.Date() - days(10), y = -4, label = "past")  +
-  annotate("text", x = Sys.Date() + days(12), y = -4, label = "future")  +
-  theme_bw() +
-  coord_cartesian(xlim = c(min(forecast_df$datetime) - 5,
-                           Sys.Date() + 7)) +
-  scale_linetype_manual(values = 'dashed', name = '') +
-  scale_colour_manual(values = 'black', name = '') +
-  theme(strip.text = element_text(colour = 'orange'),
-        axis.title.y = element_text(colour = 'green'),
-        axis.title.x = element_text(colour = 'red'),
-        axis.text.y = element_text(colour = 'purple'),
-        axis.text.x = element_text(colour = 'red'),
-        plot.caption = element_text(hjust = 0, colour = 'purple'),
-        plot.title = element_text(colour = 'orange'), 
-        plot.subtitle = element_text(colour = 'green'))
-```
-
 
 
 ```{r make-standard}
