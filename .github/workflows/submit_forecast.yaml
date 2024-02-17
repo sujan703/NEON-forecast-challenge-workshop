@@ -14,12 +14,12 @@ jobs:
       - run: git config --system --add safe.directory '*'
       
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           
       - name: Run automatic prediction file
-        run: Rscript -e 'rmarkdown::render(input = "Submit_forecast/Neon_forecast_challange.Rmd")'
+        run: Rscript -e 'rmarkdown::render(input = "/Users/sujansubedi/FREC 5174/NEON-forecast-challenge-workshop/Submit_forecast/Neon_forecast_challange.Rmd")'
         
       - name: commit + push output
         run: |
