@@ -5,6 +5,8 @@ date: "`r Sys.Date()`"
 ---
 
 ```{r message=FALSE}
+install.packages("tidymodels")
+install.packages("ranger")
 library(tidymodels)
 library(ranger)
 tidymodels_prefer()
