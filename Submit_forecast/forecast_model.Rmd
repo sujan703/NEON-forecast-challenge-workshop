@@ -115,7 +115,7 @@ correlation_matrix <- cor(clean_data[, c("air_temperature", "relative_humidity",
 
 correlation_matrix= as.data.frame(correlation_matrix)
 
-#temp is highly correlated with air_temp(89%), followed by surface_longwave(79%), air_pressure(57%) and surface_shortwave(50%). Also, air_temp and surface are highly correlated(86%). I decided to keep the predictors which are corelated with each other less than 50%. therefore surface_long to omit.
+#temp is highly correlated with air_temp(89%), followed by surface_longwave(79%), air_pressure(57%) and surface_shortwave(50%). Also, air_temp and surface are highly correlated(86%). I decided to keep the predictors which are correlated with each other less than 50%. therefore surface_long to omit.
 
 clean_data = clean_data %>% select(c(1:5,9,10))
 
