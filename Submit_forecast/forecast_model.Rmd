@@ -110,7 +110,7 @@ targets_df <- targets |>
 #Remove all the NA.obs
 clean_data = na.omit(targets_df)
 
-# use the correlation matrix to see which regressors are highly correlated with each other and with our response variable (temperature). We want strong correlation between response and regressor, and no or weak correlation between regressors.
+# use the correlation matrix to see which predictors are highly correlated with each other and with our response variable (temperature). We want strong correlation between response and regressors, and no or weak correlation between regressors.
 correlation_matrix <- cor(clean_data[, c("air_temperature", "relative_humidity", "eastward_wind", "air_pressure", "surface_downwelling_longwave_flux_in_air", "surface_downwelling_shortwave_flux_in_air" ,"temperature")], use = "complete.obs")
 
 correlation_matrix= as.data.frame(correlation_matrix)
